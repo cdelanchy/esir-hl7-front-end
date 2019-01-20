@@ -19,11 +19,11 @@
           <td>Chambre</td>
           <td>Lit</td>
           <td>Date de sortie</td>
-
-
    
         </tr>
-        <tr v-for="patient in patients" :class="patient.action">
+
+      <template v-for="patient in patients" >
+        <tr :class="patient.action" v-on:click="expand(patient.ipp)">
           <td>{{ patient.name }}</td>
           <td>{{ patient.firstname }}</td>
           <td>{{ patient.sex }}</td>
@@ -34,7 +34,16 @@
           <td>{{ patient.room }}</td>
           <td>{{ patient.bed }}</td>
           <td>{{ patient.checkoutDate }}</td>
-        </tr>
+         </tr>
+         <tr v-for="item in patient.history" v-if="patient.ipp in expanded">
+          <td>{{ item.event }}</td>
+          <td>{{ item.date }}</td>
+          <td v-if="item.service" >{{ item.service }}</td>
+          <td v-if="item.room">{{ item.room }}</td>
+          <td v-if="item.bed">{{ item.bed }}</td>
+         </tr>
+      </template>
+
       </table>
     </div>
     <div v-else>
@@ -51,7 +60,8 @@ export default {
   name: 'patients',
   data () {
     return {
-      patients: []
+      patients: [],
+      expanded: {}
     }
   },
   mounted () {
@@ -64,6 +74,12 @@ export default {
     async getPatients () {
       const response = await PostsService.fetchPosts()
       this.patients = response.data.patients
+    },
+    expand(id) {
+      if (id in this.expanded)
+        this.$delete(this.expanded, id);
+      else
+        this.$set(this.expanded, id, true);
     }
   }
 }
