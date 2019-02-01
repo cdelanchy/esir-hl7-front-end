@@ -18,4 +18,15 @@ npm run build
 npm run build --report
 ```
 
-For a detailed explanation on how things work, check out the [guide](http://vuejs-templates.github.io/webpack/) and [docs for vue-loader](http://vuejs.github.io/vue-loader).
+## Environment
+
+You can specify the URL of the HL7 Backend server in *config/dev.env.js* of *config/prod.env.js* depending on your environment.
+
+## Docker Build
+
+Before building your image, please specify the path to the HL7 Backend Server in *config/prod.env.js*.
+
+```
+docker build -t <image-name> .
+```
+

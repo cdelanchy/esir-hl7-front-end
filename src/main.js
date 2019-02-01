@@ -8,7 +8,7 @@ import socketio from 'vue-socket-io'
 
 Vue.config.productionTip = false
 Vue.use(Notifications)
-Vue.use(socketio, 'ws://localhost:8085')
+Vue.use(socketio, process.env.VUE_APP_WS_URL || 'ws://localhost:8080')
 
 /* eslint-disable no-new */
 new Vue({
