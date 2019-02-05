@@ -24,8 +24,8 @@ You can specify the URL of the HL7 Backend server in *config/dev.env.js* of *con
 
 It has the following keys:
 
-* **`VUE_APP_SERVER_URL`: set the address for the back-end.
-* **`VUE_APP_WS_URL`: set the address for the websocket back-end.
+* **`VUE_APP_SERVER_URL`**: set the address for the back-end.
+* **`VUE_APP_WS_URL`**: set the address for the websocket back-end.
 
 ## Docker Build
 
