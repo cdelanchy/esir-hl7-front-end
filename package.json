@@ -1,5 +1,5 @@
 {
-  "name": "client",
+  "name": "esrh-hl7-front-end",
   "version": "1.0.0",
   "description": "Front-end to display patients' state for ESRH TP.",
   "private": true,
