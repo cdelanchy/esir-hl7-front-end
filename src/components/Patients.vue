@@ -1,134 +1,304 @@
-/* eslint-disable */
-
 <template>
-  <div class="patients">
-    <h1>Patients</h1>
- <div v-if="patients.length > 0" class="table-wrap">
+  <div class="app-shell">
+    <header class="topbar">
       <div>
-        <router-link v-bind:to="{ name: 'NewPatient' }" class="">Add Patient</router-link>
+        <p class="eyebrow">FHIR MVP</p>
+        <h1>HL7 → FHIR patient dashboard</h1>
       </div>
-      <table>
-        <tr>
-          <td>Name</td>
-          <td>Prénom</td>
-          <td>Sexe</td>
-          <td>IPP</td>
-          <td>Date de naissance</td>
-          <td>Date d'admission</td>
-          <td>Service</td>
-          <td>Chambre</td>
-          <td>Lit</td>
-          <td>Date de sortie</td>
-   
-        </tr>
+      <label class="upload-button">
+        <input type="file" accept=".hl7,.txt" @change="onFileSelected" />
+        <span>Upload HL7</span>
+      </label>
+    </header>
 
-      <template v-for="patient in patients" >
-        <tr :class="patient.action" v-on:click="expand(patient.ipp)">
-          <td>{{ patient.name }}</td>
-          <td>{{ patient.firstname }}</td>
-          <td>{{ patient.sex }}</td>
-          <td>{{ patient.ipp }}</td>
-          <td>{{ patient.birthDate }}</td>
-          <td>{{ patient.surgeryDate }}</td>
-          <td>{{ patient.service }}</td>
-          <td>{{ patient.room }}</td>
-          <td>{{ patient.bed }}</td>
-          <td>{{ patient.checkoutDate }}</td>
-         </tr>
-         <tr v-for="item in patient.history" v-if="patient.ipp in expanded">
-          <td>{{ item.event }}</td>
-          <td>{{ item.date }}</td>
-          <td v-if="item.service" >{{ item.service }}</td>
-          <td v-if="item.room">{{ item.room }}</td>
-          <td v-if="item.bed">{{ item.bed }}</td>
-         </tr>
-      </template>
+    <section class="panel summary-panel">
+      <div>
+        <span class="label">Patients</span>
+        <strong>{{ patients.length }}</strong>
+      </div>
+      <div>
+        <span class="label">Dernier message</span>
+        <strong>{{ lastMessageType || 'Aucun' }}</strong>
+      </div>
+      <div>
+        <span class="label">Statut</span>
+        <strong>{{ lastStatus }}</strong>
+      </div>
+    </section>
 
-      </table>
-    </div>
-    <div v-else>
-      There are no patients.. Lets add one now <br /><br />
-      <router-link v-bind:to="{ name: 'NewPatient' }" class="add_patient_link">Add Patient</router-link>
-    </div>
+    <section v-if="lastAlert" class="panel alert-panel" :class="lastAlert.type">
+      {{ lastAlert.message }}
+    </section>
+
+    <section class="panel">
+      <h2>Liste des patients</h2>
+      <div v-if="patients.length" class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Prénom</th>
+              <th>Sexe</th>
+              <th>IPP</th>
+              <th>Service</th>
+              <th>Chambre</th>
+              <th>Lit</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="patient in patients" :key="patient.ipp" :class="patient.status">
+              <td>{{ patient.name }}</td>
+              <td>{{ patient.firstname }}</td>
+              <td>{{ patient.sex }}</td>
+              <td>{{ patient.ipp }}</td>
+              <td>{{ patient.service || '—' }}</td>
+              <td>{{ patient.room || '—' }}</td>
+              <td>{{ patient.bed || '—' }}</td>
+              <td>{{ patient.statusLabel }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="empty-state">
+        Aucun patient en mémoire. Chargez un fichier HL7 pour commencer.
+      </div>
+    </section>
+
+    <section v-if="lastBundle" class="panel bundle-panel">
+      <h2>Bundle FHIR généré</h2>
+      <pre>{{ prettyBundle }}</pre>
+    </section>
   </div>
 </template>
 
 <script>
-import PostsService from '@/services/PostsService'
+import { transformHl7ToFhir } from '@/services/hl7Transformer'
 
 export default {
-  name: 'patients',
+  name: 'Patients',
   data () {
     return {
       patients: [],
-      expanded: {}
+      lastBundle: null,
+      lastMessageType: '',
+      lastAlert: null,
+      lastStatus: 'idle'
     }
   },
-  mounted () {
-    this.getPatients()
-    this.$socket.on('refresh', (data) => {
-      this.getPatients()
-    });
+  computed: {
+    prettyBundle () {
+      return this.lastBundle ? JSON.stringify(this.lastBundle, null, 2) : ''
+    }
   },
   methods: {
-    async getPatients () {
-      const response = await PostsService.fetchPosts()
-      this.patients = response.data.patients
-    },
-    expand(id) {
-      if (id in this.expanded)
-        this.$delete(this.expanded, id);
-      else
-        this.$set(this.expanded, id, true);
+    async onFileSelected (event) {
+      const file = event.target.files && event.target.files[0]
+      if (!file) return
+
+      const text = await file.text()
+      try {
+        const result = transformHl7ToFhir(text)
+        this.lastBundle = result.bundle
+        this.lastMessageType = result.messageType
+        this.lastStatus = 'ready'
+
+        const patient = result.patient
+        const record = {
+          id: patient.id,
+          name: patient.name[0].family,
+          firstname: patient.name[0].given[0],
+          sex: patient.gender,
+          birthDate: patient.birthDate || '—',
+          ipp: patient.identifier[0].value,
+          status: result.encounter.status === 'finished' ? 'checkout' : 'insert',
+          statusLabel: result.encounter.status === 'finished' ? 'Sortie' : 'Admission',
+          service: result.encounter.serviceType.text,
+          room: (result.encounter.location && result.encounter.location[0] && result.encounter.location[0].location && result.encounter.location[0].location.display) || '—',
+          bed: '—',
+          eventDate: result.encounter.period.start
+        }
+
+        const existingIndex = this.patients.findIndex(item => item.ipp === record.ipp)
+        if (existingIndex >= 0) {
+          this.patients.splice(existingIndex, 1, record)
+        } else {
+          this.patients.push(record)
+        }
+
+        this.lastAlert = {
+          type: 'success',
+          message: `Le message ${result.messageType} a été transformé en Bundle FHIR et ajouté au tableau.`
+        }
+      } catch (error) {
+        this.lastStatus = 'error'
+        this.lastAlert = {
+          type: 'error',
+          message: error.message || 'Le fichier HL7 est invalide.'
+        }
+        this.lastBundle = null
+      }
     }
   }
 }
 </script>
 
-<style type="text/css">
-.table-wrap {
-  width: 90%;
-  margin: 0 auto;
-  text-align: center;
+<style scoped>
+* {
+  box-sizing: border-box;
 }
+
+.app-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  font-family: 'Avenir', Helvetica, Arial, sans-serif;
+  color: #1f2a37;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #4d7ef7;
+  font-weight: 700;
+}
+
+h1, h2 {
+  margin: 0;
+}
+
+.upload-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 160px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4d7ef7 0%, #2a5ad6 100%);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 20px rgba(77, 126, 247, 0.2);
+}
+
+.upload-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid #e7ecf4;
+  border-radius: 14px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+  padding: 18px 20px;
+  margin-bottom: 20px;
+}
+
+.summary-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.summary-panel .label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.summary-panel strong {
+  font-size: 1.8rem;
+}
+
+.alert-panel {
+  font-weight: 600;
+}
+
+.alert-panel.success {
+  background: #e9f9ef;
+  border-color: #9fe0b7;
+  color: #1d6b42;
+}
+
+.alert-panel.error {
+  background: #ffe8e8;
+  border-color: #f5b2b2;
+  color: #a12d2d;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
 table {
   width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
 }
-table th, table tr {
+
+th,
+td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #edf2f7;
   text-align: left;
 }
-table thead {
-  background: #f2f2f2;
-}
-table tr td {
-  padding: 10px;
-}
-/* table tr:nth-child(odd) {
-  background: #f2f2f2;
-} */
-table tr:nth-child(1) {
-  background: #4d7ef7;
-  color: #fff;
-} 
-.insert {
-  background: #c8f1b8;
-}
-.transfert {
-  background: #f7d39e;
-}
-.checkout {
-  background: #cfcdcd;
-}
-a {
-  color: #4d7ef7;
-  text-decoration: none;
-}
-a.add_patient_link {
-  background: #4d7ef7;
-  color: #fff;
-  padding: 10px 80px;
-  text-transform: uppercase;
+
+th {
   font-size: 12px;
-  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #475569;
+  background: #f8fafc;
+}
+
+tr.insert {
+  background: #eefcf3;
+}
+
+tr.checkout {
+  background: #f1f5f9;
+}
+
+.empty-state {
+  padding: 10px 0;
+  color: #64748b;
+}
+
+.bundle-panel pre {
+  margin: 0;
+  background: #111827;
+  color: #dbeafe;
+  padding: 16px;
+  border-radius: 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 720px) {
+  .topbar,
+  .summary-panel {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
 }
 </style>
