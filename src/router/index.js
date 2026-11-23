@@ -1,12 +1,9 @@
-import Vue from 'vue'
-import Router from 'vue-router'
-import Patients from '@/components/Patients'
-import NewPatient from '@/components/NewPatient'
+import { createRouter, createWebHistory } from 'vue-router'
+import Patients from '@/components/Patients.vue'
+import NewPatient from '@/components/NewPatient.vue'
 
-Vue.use(Router)
-
-export default new Router({
-  mode: 'history',
+const router = createRouter({
+  history: createWebHistory(),
   routes: [
     {
       path: '/',
@@ -20,3 +17,5 @@ export default new Router({
     }
   ]
 })
+
+export default router

@@ -36,13 +36,16 @@
         <table>
           <thead>
             <tr>
-              <th>Nom</th>
+              <th>Nom de naissance</th>
               <th>Prénom</th>
               <th>Sexe</th>
               <th>IPP</th>
+              <th>Date de naissance</th>
+              <th>Date d'admission</th>
               <th>Service</th>
               <th>Chambre</th>
               <th>Lit</th>
+              <th>Date de sortie</th>
               <th>Statut</th>
             </tr>
           </thead>
@@ -51,10 +54,13 @@
               <td>{{ patient.name }}</td>
               <td>{{ patient.firstname }}</td>
               <td>{{ patient.sex }}</td>
-              <td>{{ patient.ipp }}</td>
+              <td>{{ patient.ippDisplay || patient.ipp }}</td>
+              <td>{{ formatDate(patient.birthDate, false) }}</td>
+              <td>{{ formatDate(patient.admissionDate) }}</td>
               <td>{{ patient.service || '—' }}</td>
               <td>{{ patient.room || '—' }}</td>
               <td>{{ patient.bed || '—' }}</td>
+              <td>{{ formatDate(patient.dischargeDate) }}</td>
               <td>{{ patient.statusLabel }}</td>
             </tr>
           </tbody>
@@ -73,7 +79,8 @@
 </template>
 
 <script>
-import { transformHl7ToFhir } from '@/services/hl7Transformer'
+import { parseHl7Message, transformHl7ToFhir } from '@/services/hl7Transformer'
+import FhirServerApi from '@/services/FhirServerApi'
 
 export default {
   name: 'Patients',
@@ -92,31 +99,115 @@ export default {
     }
   },
   methods: {
+    formatDate (value, includeTime = true) {
+      if (!value || value === '—' || value === '-') return '—'
+
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return value
+
+      const formatter = new Intl.DateTimeFormat('fr-FR', includeTime
+        ? {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          }
+        : {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          })
+
+      const formatted = formatter.format(date)
+      return includeTime ? formatted.replace(',', ' -') : formatted
+    },
+    // État connu du patient, au format attendu par transformHl7ToFhir :
+    // vide s'il n'existe pas sur le serveur FHIR (A01 autorisé, A02/A03 refusés),
+    // sinon une entrée (A01 refusé, A02/A03 autorisés) dont le statut de sortie et
+    // les dates viennent de l'Encounter séjour (PV1-19) et de son dernier mouvement.
+    async getExistingPatients ({ messageType, ipp, patientIdentifierSystem, visitNumber, visitNumberSystem }) {
+      const patientSearch = await FhirServerApi.searchPatientByIdentifier(patientIdentifierSystem, ipp)
+      const existsOnServer = (patientSearch?.data?.entry || []).length > 0
+      if (!existsOnServer) return []
+
+      const existingPatient = { ipp, admissionDate: null, lastEventDate: null, discharged: false }
+      if (messageType === 'ADT^A01' || !visitNumber) return [existingPatient]
+
+      const visitSearch = await FhirServerApi.searchEncounterByIdentifier(visitNumberSystem, visitNumber)
+      const visitEncounter = visitSearch?.data?.entry?.[0]?.resource
+      if (!visitEncounter) {
+        throw new Error(`Le séjour ${visitNumber} du patient ${ipp} n'existe pas sur le serveur FHIR.`)
+      }
+
+      const movementSearch = await FhirServerApi.searchLatestMovementEncounter(visitEncounter.id)
+      const lastMovement = movementSearch?.data?.entry?.[0]?.resource
+
+      return [{
+        ...existingPatient,
+        status: visitEncounter.status === 'finished' ? 'discharged' : visitEncounter.status,
+        discharged: visitEncounter.status === 'finished',
+        admissionDate: visitEncounter.period?.start || null,
+        lastEventDate: lastMovement?.period?.start || null
+      }]
+    },
     async onFileSelected (event) {
       const file = event.target.files && event.target.files[0]
       if (!file) return
+      // Permet de re-sélectionner le même fichier ensuite
+      event.target.value = ''
 
       const text = await file.text()
       try {
-        const result = transformHl7ToFhir(text)
+        this.lastStatus = 'checking-fhir'
+        const existingPatients = await this.getExistingPatients(parseHl7Message(text))
+        const result = transformHl7ToFhir(text, existingPatients)
+
         this.lastBundle = result.bundle
         this.lastMessageType = result.messageType
+
+        const serverResponse = await FhirServerApi.submitTransactionBundle(result.bundle)
         this.lastStatus = 'ready'
 
         const patient = result.patient
+        const { patientState } = result
+        const serviceLocation = result.locationHierarchy && result.locationHierarchy.service
+        const roomLocation = result.locationHierarchy && result.locationHierarchy.room
+        const bedLocation = result.locationHierarchy && result.locationHierarchy.bed
+        const existingPatient = this.patients.find(item => item.ipp === patient.identifier[0].value)
+        const isDischarged = result.encounter.status === 'finished'
+
+        const admissionDate = result.encounter.period?.start
+          || patientState.admissionDate
+          || (existingPatient && existingPatient.admissionDate)
+          || '—'
+
+        const dischargeDate = isDischarged
+          ? (result.encounter.period?.end || patientState.checkoutDate || '—')
+          : (existingPatient && existingPatient.dischargeDate) || '—'
+
+        const identifierValueDisplay = patient.identifier?.[0]?.value || '—'
+        const identifierSystemDisplay = patient.identifier?.[0]?.system || '—'
+        const statusLabels = { admission: 'Admission', transfer: 'Transfert', discharge: 'Sortie' }
+
         const record = {
-          id: patient.id,
           name: patient.name[0].family,
           firstname: patient.name[0].given[0],
           sex: patient.gender,
           birthDate: patient.birthDate || '—',
-          ipp: patient.identifier[0].value,
-          status: result.encounter.status === 'finished' ? 'checkout' : 'insert',
-          statusLabel: result.encounter.status === 'finished' ? 'Sortie' : 'Admission',
-          service: result.encounter.serviceType.text,
-          room: (result.encounter.location && result.encounter.location[0] && result.encounter.location[0].location && result.encounter.location[0].location.display) || '—',
-          bed: '—',
-          eventDate: result.encounter.period.start
+          ipp: identifierValueDisplay,
+          ippDisplay: identifierSystemDisplay === '—' ? identifierValueDisplay : `${identifierValueDisplay} (${identifierSystemDisplay})`,
+          admissionDate,
+          dischargeDate,
+          lastEventDate: patientState.lastEventDate || admissionDate,
+          status: isDischarged ? 'checkout' : 'insert',
+          statusLabel: statusLabels[patientState.type] || 'Admission',
+          service: serviceLocation ? serviceLocation.name : '—',
+          room: roomLocation ? roomLocation.name : '—',
+          bed: bedLocation ? bedLocation.name : '—',
+          eventDate: result.movementEncounter.period?.start || admissionDate
         }
 
         const existingIndex = this.patients.findIndex(item => item.ipp === record.ipp)
@@ -128,13 +219,13 @@ export default {
 
         this.lastAlert = {
           type: 'success',
-          message: `Le message ${result.messageType} a été transformé en Bundle FHIR et ajouté au tableau.`
+          message: `Le message ${result.messageType} a été transformé, vérifié sur Aidbox, puis envoyé avec succès (${serverResponse?.status || '200'}).`
         }
       } catch (error) {
         this.lastStatus = 'error'
         this.lastAlert = {
           type: 'error',
-          message: error.message || 'Le fichier HL7 est invalide.'
+          message: error.response?.data?.issue?.[0]?.details?.text || error.message || 'Le fichier HL7 est invalide.'
         }
         this.lastBundle = null
       }
@@ -149,11 +240,20 @@ export default {
 }
 
 .app-shell {
-  max-width: 1200px;
+  width: min(60vw, 1536px);
+  max-width: 1536px;
+  min-width: 320px;
   margin: 0 auto;
   padding: 24px;
   font-family: 'Avenir', Helvetica, Arial, sans-serif;
   color: #1f2a37;
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    width: 92vw;
+    min-width: 0;
+  }
 }
 
 .topbar {

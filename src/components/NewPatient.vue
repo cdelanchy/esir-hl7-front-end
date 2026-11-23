@@ -1,72 +1,80 @@
 <template>
   <div class="patients">
-    <h1>Add Patient</h1>
-      <div class="form">
-        <div>
-        <label for="file">Choose a HL7 file:</label>
-          <input type="file"
-            id="file" name="file" ref="file" v-on:change="processFile()">
-        </div>
-        <div>
-          <button class="app_patient_btn" @click="addPatient">Add</button>
-        </div>
+    <h1>Uploader un message HL7</h1>
+    <div class="form">
+      <div>
+        <label for="file">Choisir un fichier HL7 :</label>
+        <input id="file" type="file" ref="fileInput" @change="processFile" />
       </div>
+      <div>
+        <button class="app_post_btn" @click="addPatient">Valider le message</button>
+      </div>
+    </div>
   </div>
 </template>
 
-<script>
-import PostsService from '@/services/PostsService'
-export default {
-  name: 'NewPatient',
-  data () {
-    return {
-      file: ''
-    }
-  },
-  methods: {
-    async addPatient () {
-      let formData = new FormData();
-      formData.append('file', this.file);
+<script setup>
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { transformHl7ToFhir } from '@/services/hl7Transformer'
 
-      const result = await PostsService.sendFile(formData)
+const file = ref(null)
+const fileInput = ref(null)
+const router = useRouter()
 
-      this.$notify({
-        group: 'app',
-        title: 'A propos de votre message HL7...',
-        type: result.type,
-        text: result.message,
-        duration: 10000,
-      });
+const processFile = () => {
+  file.value = fileInput.value.files[0]
+}
 
-      this.$router.push({ name: 'Patients' })
-    },
-    processFile() {
-      this.file = this.$refs.file.files[0];
-      
-    }
+const addPatient = async () => {
+  if (!file.value) {
+    alert('Choisissez un fichier HL7.')
+    return
+  }
+
+  const text = await file.value.text()
+  try {
+    const result = transformHl7ToFhir(text)
+    alert(result.operationOutcome.issue[0].details.text)
+    router.push({ name: 'Patients' })
+  } catch (error) {
+    alert(error.message || 'Le fichier HL7 est invalide.')
   }
 }
 </script>
-<style type="text/css">
-.form input, .form textarea {
-  width: 500px;
-  padding: 10px;
-  border: 1px solid #e0dede;
+
+<style scoped>
+.patients {
+  max-width: 700px;
+  margin: 60px auto;
+  background: white;
+  border-radius: 14px;
+  padding: 30px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+}
+
+.form input,
+.form textarea {
+  width: 100%;
+  max-width: 500px;
+  padding: 12px;
+  border: 1px solid #dfe7f1;
+  border-radius: 10px;
   outline: none;
-  font-size: 12px;
+  font-size: 14px;
 }
+
 .form div {
-  margin: 20px;
+  margin: 20px 0;
 }
+
 .app_post_btn {
   background: #4d7ef7;
   color: #fff;
-  padding: 10px 80px;
-  text-transform: uppercase;
-  font-size: 12px;
-  font-weight: bold;
-  width: 520px;
+  padding: 12px 30px;
   border: none;
+  border-radius: 10px;
   cursor: pointer;
+  font-weight: 700;
 }
 </style>
