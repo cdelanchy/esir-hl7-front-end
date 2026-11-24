@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { DateTime } from 'luxon'
 import { transformHl7ToFhir } from './hl7Transformer.js'
 
-const sampleA01 = readFileSync(new URL('../../../esrh-tp-hl7/HL7files/A01.HL7', import.meta.url), 'utf8')
+const sampleA01 = readFileSync(new URL('../../fixtures/A01-sample.hl7', import.meta.url), 'utf8')
 
 const hl7DateToIso = (value) => DateTime.fromFormat(value, 'yyyyMMddHHmmss').toISO({ suppressMilliseconds: true })
 

@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Patients from '@/components/Patients.vue'
-import NewPatient from '@/components/NewPatient.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -9,11 +8,6 @@ const router = createRouter({
       path: '/',
       name: 'Patients',
       component: Patients
-    },
-    {
-      path: '/patients/new',
-      name: 'NewPatient',
-      component: NewPatient
     }
   ]
 })
