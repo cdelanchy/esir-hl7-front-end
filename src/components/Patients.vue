@@ -2,13 +2,26 @@
   <div class="app-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">FHIR MVP</p>
-        <h1>HL7 → FHIR patient dashboard</h1>
+        <p class="eyebrow">TP ESI</p>
+        <h1>Suivi des patients dans le SIH</h1>
       </div>
-      <label class="upload-button">
-        <input type="file" accept=".hl7,.txt" @change="onFileSelected" />
-        <span>Upload HL7</span>
-      </label>
+      <div class="topbar-actions">
+        <button
+          type="button"
+          class="toggle-button"
+          :aria-pressed="showBundle"
+          :disabled="!lastBundle"
+          :title="lastBundle ? '' : 'Aucun bundle généré : chargez d’abord un fichier HL7'"
+          @click="showBundle = !showBundle"
+        >
+          <span class="toggle-switch" aria-hidden="true"></span>
+          Affichage du Bundle FHIR
+        </button>
+        <label class="upload-button">
+          <input type="file" accept=".hl7,.txt" @change="onFileSelected" />
+          <span>Upload HL7</span>
+        </label>
+      </div>
     </header>
 
     <section class="panel summary-panel">
@@ -21,8 +34,8 @@
         <strong>{{ lastMessageType || 'Aucun' }}</strong>
       </div>
       <div>
-        <span class="label">Statut</span>
-        <strong>{{ lastStatus }}</strong>
+        <span class="label">Mouvements</span>
+        <strong>{{ movementCount }}</strong>
       </div>
     </section>
 
@@ -32,11 +45,17 @@
 
     <section class="panel">
       <h2>Liste des patients</h2>
+      <p class="sync-info" :class="{ error: syncError }">
+        <template v-if="syncError">Synchronisation avec le serveur FHIR impossible : {{ syncError }}</template>
+        <template v-else-if="lastSyncAt">Synchronisé avec le serveur FHIR à {{ lastSyncAt.toLocaleTimeString('fr-FR') }} (actualisation toutes les {{ refreshIntervalSeconds }} s)</template>
+        <template v-else>Chargement des patients depuis le serveur FHIR…</template>
+      </p>
       <div v-if="patients.length" class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Nom de naissance</th>
+              <th>Nom d'usage</th>
               <th>Prénom</th>
               <th>Sexe</th>
               <th>IPP</th>
@@ -47,11 +66,14 @@
               <th>Lit</th>
               <th>Date de sortie</th>
               <th>Statut</th>
+              <th><span class="visually-hidden">Historique</span></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="patient in patients" :key="patient.ipp" :class="patient.status">
+            <template v-for="patient in patients" :key="patient.id">
+            <tr :class="patient.status">
               <td>{{ patient.name }}</td>
+              <td>{{ patient.usualName }}</td>
               <td>{{ patient.firstname }}</td>
               <td>{{ patient.sex }}</td>
               <td>{{ patient.ippDisplay || patient.ipp }}</td>
@@ -62,7 +84,51 @@
               <td>{{ patient.bed || '—' }}</td>
               <td>{{ formatDate(patient.dischargeDate) }}</td>
               <td>{{ patient.statusLabel }}</td>
+              <td>
+                <button
+                  type="button"
+                  class="history-button"
+                  :aria-expanded="isExpanded(patient.id)"
+                  :disabled="!patient.history.length"
+                  @click="toggleHistory(patient.id)"
+                >
+                  {{ isExpanded(patient.id) ? 'Masquer' : 'Historique' }}
+                </button>
+              </td>
             </tr>
+            <tr v-if="isExpanded(patient.id)" class="history-row">
+              <td :colspan="13">
+                <div v-for="visit in patient.history" :key="visit.id" class="history-visit">
+                  <p class="history-visit-title">
+                    <strong>Venue {{ visit.visitNumber }}</strong>
+                    — du {{ formatDate(visit.start) }}
+                    {{ visit.finished ? `au ${formatDate(visit.end)}` : '(en cours)' }}
+                  </p>
+                  <table v-if="visit.movements.length" class="history-table">
+                    <thead>
+                      <tr>
+                        <th>Mouvement</th>
+                        <th>Date / heure</th>
+                        <th>Service</th>
+                        <th>Chambre</th>
+                        <th>Lit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="movement in visit.movements" :key="movement.id" :class="movement.status">
+                        <td>{{ movement.typeLabel }}</td>
+                        <td>{{ formatDate(movement.date) }}</td>
+                        <td>{{ movement.service || '—' }}</td>
+                        <td>{{ movement.room || '—' }}</td>
+                        <td>{{ movement.bed || '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p v-else class="history-empty">Aucun mouvement enregistré pour cette venue.</p>
+                </div>
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -71,7 +137,7 @@
       </div>
     </section>
 
-    <section v-if="lastBundle" class="panel bundle-panel">
+    <section v-if="lastBundle && showBundle" class="panel bundle-panel">
       <h2>Bundle FHIR généré</h2>
       <pre>{{ prettyBundle }}</pre>
     </section>
@@ -81,6 +147,12 @@
 <script>
 import { parseHl7Message, transformHl7ToFhir } from '@/services/hl7Transformer'
 import FhirServerApi from '@/services/FhirServerApi'
+import { buildPatientRows } from '@/services/patientRows'
+import { config } from '@/config'
+
+// Rafraîchissement périodique pour voir les patients poussés par d'autres clients
+// (VITE_PATIENTS_REFRESH_INTERVAL_SECONDS dans le .env).
+const REFRESH_INTERVAL_MS = config.patientsRefreshIntervalSeconds * 1000
 
 export default {
   name: 'Patients',
@@ -88,17 +160,67 @@ export default {
     return {
       patients: [],
       lastBundle: null,
+      // Affichage du panneau « Bundle FHIR généré » (masqué par défaut).
+      showBundle: false,
       lastMessageType: '',
       lastAlert: null,
-      lastStatus: 'idle'
+      refreshIntervalSeconds: REFRESH_INTERVAL_MS / 1000,
+      lastSyncAt: null,
+      syncError: '',
+      // Ids des patients dont l'historique est déplié (conservé entre deux rafraîchissements).
+      expandedPatientIds: [],
+      refreshTimer: null,
+      refreshInFlight: null
     }
   },
+  mounted () {
+    this.refreshPatients()
+    this.refreshTimer = setInterval(() => this.refreshPatients(), REFRESH_INTERVAL_MS)
+  },
+  beforeUnmount () {
+    clearInterval(this.refreshTimer)
+  },
   computed: {
+    // Nombre total de mouvements (admissions, transferts, sorties) enregistrés sur le serveur.
+    movementCount () {
+      return this.patients.reduce((total, patient) => total + patient.history.reduce((sum, visit) => sum + visit.movements.length, 0), 0)
+    },
     prettyBundle () {
       return this.lastBundle ? JSON.stringify(this.lastBundle, null, 2) : ''
     }
   },
   methods: {
+    isExpanded (patientId) {
+      return this.expandedPatientIds.includes(patientId)
+    },
+    toggleHistory (patientId) {
+      this.expandedPatientIds = this.isExpanded(patientId)
+        ? this.expandedPatientIds.filter(id => id !== patientId)
+        : [...this.expandedPatientIds, patientId]
+    },
+    // Recharge la liste depuis le serveur FHIR. Un appel déjà en cours est
+    // réutilisé pour éviter les requêtes concurrentes.
+    refreshPatients () {
+      if (this.refreshInFlight) return this.refreshInFlight
+
+      this.refreshInFlight = (async () => {
+        try {
+          const [patients, encounters] = await Promise.all([
+            FhirServerApi.searchAll('Patient'),
+            FhirServerApi.searchAll('Encounter')
+          ])
+          this.patients = buildPatientRows(patients, encounters)
+          this.lastSyncAt = new Date()
+          this.syncError = ''
+        } catch (error) {
+          this.syncError = error.message || 'Erreur inconnue'
+        } finally {
+          this.refreshInFlight = null
+        }
+      })()
+
+      return this.refreshInFlight
+    },
     formatDate (value, includeTime = true) {
       if (!value || value === '—' || value === '-') return '—'
 
@@ -161,7 +283,6 @@ export default {
 
       const text = await file.text()
       try {
-        this.lastStatus = 'checking-fhir'
         const existingPatients = await this.getExistingPatients(parseHl7Message(text))
         const result = transformHl7ToFhir(text, existingPatients)
 
@@ -169,60 +290,15 @@ export default {
         this.lastMessageType = result.messageType
 
         const serverResponse = await FhirServerApi.submitTransactionBundle(result.bundle)
-        this.lastStatus = 'ready'
 
-        const patient = result.patient
-        const { patientState } = result
-        const serviceLocation = result.locationHierarchy && result.locationHierarchy.service
-        const roomLocation = result.locationHierarchy && result.locationHierarchy.room
-        const bedLocation = result.locationHierarchy && result.locationHierarchy.bed
-        const existingPatient = this.patients.find(item => item.ipp === patient.identifier[0].value)
-        const isDischarged = result.encounter.status === 'finished'
-
-        const admissionDate = result.encounter.period?.start
-          || patientState.admissionDate
-          || (existingPatient && existingPatient.admissionDate)
-          || '—'
-
-        const dischargeDate = isDischarged
-          ? (result.encounter.period?.end || patientState.checkoutDate || '—')
-          : (existingPatient && existingPatient.dischargeDate) || '—'
-
-        const identifierValueDisplay = patient.identifier?.[0]?.value || '—'
-        const identifierSystemDisplay = patient.identifier?.[0]?.system || '—'
-        const statusLabels = { admission: 'Admission', transfer: 'Transfert', discharge: 'Sortie' }
-
-        const record = {
-          name: patient.name[0].family,
-          firstname: patient.name[0].given[0],
-          sex: patient.gender,
-          birthDate: patient.birthDate || '—',
-          ipp: identifierValueDisplay,
-          ippDisplay: identifierSystemDisplay === '—' ? identifierValueDisplay : `${identifierValueDisplay} (${identifierSystemDisplay})`,
-          admissionDate,
-          dischargeDate,
-          lastEventDate: patientState.lastEventDate || admissionDate,
-          status: isDischarged ? 'checkout' : 'insert',
-          statusLabel: statusLabels[patientState.type] || 'Admission',
-          service: serviceLocation ? serviceLocation.name : '—',
-          room: roomLocation ? roomLocation.name : '—',
-          bed: bedLocation ? bedLocation.name : '—',
-          eventDate: result.movementEncounter.period?.start || admissionDate
-        }
-
-        const existingIndex = this.patients.findIndex(item => item.ipp === record.ipp)
-        if (existingIndex >= 0) {
-          this.patients.splice(existingIndex, 1, record)
-        } else {
-          this.patients.push(record)
-        }
+        // Le tableau reflète l'état du serveur FHIR : on le recharge.
+        await this.refreshPatients()
 
         this.lastAlert = {
           type: 'success',
-          message: `Le message ${result.messageType} a été transformé, vérifié sur Aidbox, puis envoyé avec succès (${serverResponse?.status || '200'}).`
+          message: `Le message ${result.messageType} a été envoyé avec succès (${serverResponse?.status || '200'}).`
         }
       } catch (error) {
-        this.lastStatus = 'error'
         this.lastAlert = {
           type: 'error',
           message: error.response?.data?.issue?.[0]?.details?.text || error.message || 'Le fichier HL7 est invalide.'
@@ -275,6 +351,68 @@ export default {
 
 h1, h2 {
   margin: 0;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toggle-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid #c7d6fb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #2a5ad6;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggle-button:hover:not(:disabled) {
+  background: #eef3fe;
+}
+
+.toggle-button:disabled {
+  color: #94a3b8;
+  border-color: #e2e8f0;
+  cursor: not-allowed;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  transition: background 0.15s ease;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.toggle-button[aria-pressed="true"] .toggle-switch {
+  background: #2a5ad6;
+}
+
+.toggle-button[aria-pressed="true"] .toggle-switch::after {
+  transform: translateX(14px);
 }
 
 .upload-button {
@@ -374,8 +512,84 @@ tr.insert {
   background: #eefcf3;
 }
 
+tr.transfer {
+  background: #fff4e5;
+}
+
 tr.checkout {
   background: #f1f5f9;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.history-button {
+  padding: 6px 12px;
+  border: 1px solid #c7d6fb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #2a5ad6;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.history-button:hover:not(:disabled) {
+  background: #eef3fe;
+}
+
+.history-button:disabled {
+  color: #94a3b8;
+  border-color: #e2e8f0;
+  cursor: not-allowed;
+}
+
+.history-row > td {
+  background: #f8fafc;
+  padding: 16px 20px;
+}
+
+.history-visit + .history-visit {
+  margin-top: 18px;
+}
+
+.history-visit-title {
+  margin: 0 0 6px;
+  color: #334155;
+}
+
+.history-table {
+  margin-top: 0;
+  background: #ffffff;
+  border: 1px solid #e7ecf4;
+}
+
+.history-table th,
+.history-table td {
+  padding: 8px 10px;
+}
+
+.history-empty {
+  margin: 0;
+  color: #64748b;
+}
+
+.sync-info {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.sync-info.error {
+  color: #a12d2d;
 }
 
 .empty-state {

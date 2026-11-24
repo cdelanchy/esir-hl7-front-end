@@ -76,6 +76,22 @@ export default {
     })
   },
 
+  // Récupère toutes les ressources d'un type en suivant les liens « next ».
+  async searchAll (resourceType, params = {}) {
+    const resources = []
+    let response = await this.get(`/fhir/${resourceType}`, { _count: 500, ...params })
+
+    while (response) {
+      const bundle = response.data || {}
+      ;(bundle.entry || []).forEach(entry => entry.resource && resources.push(entry.resource))
+
+      const next = (bundle.link || []).find(link => link.relation === 'next')?.url
+      response = next ? await fhirServerApi.get(next) : null
+    }
+
+    return resources
+  },
+
   async submitTransactionBundle (bundle) {
     return this.post('/fhir/', bundle)
   }

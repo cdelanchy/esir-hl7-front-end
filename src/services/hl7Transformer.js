@@ -345,12 +345,11 @@ const buildEncounterIdentifier = ({ value, system, defaultSystem, type }) => ([{
 /**
  * Encounter "séjour" (venue) : identifié par PV1-19 (numéro de venue / VN).
  * C'est l'Encounter parent de tous les mouvements du séjour.
+ * start / end : dates d'admission et de sortie, déjà résolues par l'appelant.
  */
-const buildFhirVisitEncounter = ({ patientRef, messageType, patientClass, visitNumber = '', visitNumberSystem = '', admitDate = '', dischargeDate = '', eventDate = '' }) => {
+const buildFhirVisitEncounter = ({ patientRef, messageType, patientClass, visitNumber = '', visitNumberSystem = '', start = '', end = '' }) => {
   const status = getEncounterStatus(messageType)
   const encounterClass = getEncounterClass(patientClass)
-  const start = admitDate || (messageType === 'ADT^A01' ? eventDate : '')
-  const end = status === 'finished' ? (dischargeDate || eventDate) : ''
 
   return {
     resourceType: 'Encounter',
@@ -510,15 +509,12 @@ export const parseHl7Message = (hl7Text) => {
   let service = ''
   let room = ''
   let bed = ''
-  let admitDate = ''
-  let dischargeDate = ''
   let evnRecordedDate = ''
   let evnOccurredDate = ''
   let visitNumber = ''
   let visitNumberSystem = ''
   let movementId = ''
   let movementSystem = ''
-  let movementDate = ''
   let patientNames = []
 
   for (const line of lines) {
@@ -531,6 +527,7 @@ export const parseHl7Message = (hl7Text) => {
     }
 
     if (segmentType === 'EVN') {
+      // EVN-2 : date/heure d'enregistrement, EVN-6 : date/heure de l'évènement
       evnRecordedDate = getDateValue(segments[2] || '')
       evnOccurredDate = getDateValue(segments[6] || '')
       continue
@@ -576,19 +573,14 @@ export const parseHl7Message = (hl7Text) => {
       const visit = parseCxIdentifier(segments[19] || '')
       visitNumber = visit.value
       visitNumberSystem = visit.system
-
-      // PV1-44 / PV1-45 : dates d'admission / de sortie
-      admitDate = getDateValue(segments[44] || '')
-      dischargeDate = getDateValue(segments[45] || '')
       continue
     }
 
     if (segmentType === 'ZBE') {
-      // ZBE-1 : identifiant du mouvement, ZBE-2 : date du mouvement
+      // ZBE-1 : identifiant du mouvement
       const movement = parseEiIdentifier(segments[1] || '')
       movementId = movement.value
       movementSystem = movement.system
-      movementDate = getDateValue(segments[2] || '')
     }
   }
 
@@ -600,13 +592,13 @@ export const parseHl7Message = (hl7Text) => {
     throw new Error('Le message HL7 ne contient pas d’identifiant patient (PID-3).')
   }
 
-  // Date de l'évènement (mouvement) : ZBE-2, puis EVN-6, puis EVN-2,
-  // à défaut la date de sortie (A03) ou d'admission du PV1.
-  const eventDate = movementDate
-    || evnOccurredDate
-    || evnRecordedDate
-    || (messageType === 'ADT^A03' ? dischargeDate : '')
-    || admitDate
+  // Date/heure de l'évènement : EVN-6, à défaut EVN-2. C'est la seule date
+  // utilisée pour l'admission (A01), le mouvement et la sortie (A03).
+  const eventDate = evnOccurredDate || evnRecordedDate
+
+  if (!eventDate) {
+    throw new Error('Le message HL7 ne contient pas de date d’évènement (EVN-6 ou EVN-2).')
+  }
 
   return {
     messageType,
@@ -621,8 +613,6 @@ export const parseHl7Message = (hl7Text) => {
     service,
     room,
     bed,
-    admitDate,
-    dischargeDate,
     eventDate,
     visitNumber,
     visitNumberSystem,
@@ -639,8 +629,11 @@ const ensurePatientExists = (existingPatients = [], ipp = '', context = 'Patient
   return patient
 }
 
-const buildFhirResources = (message) => {
-  const { messageType, ipp, patientIdentifierSystem, familyName, givenName, patientNames, sex, birthDate, patientClass, service, room, bed, admitDate, dischargeDate, eventDate, visitNumber, visitNumberSystem, movementId, movementSystem } = message
+// visitStart / visitEnd : dates d'admission et de sortie du séjour. Le séjour
+// étant remplacé (PUT conditionnel) à chaque message, A02/A03 doivent reprendre
+// la date d'admission enregistrée sur le serveur.
+const buildFhirResources = (message, { visitStart = '', visitEnd = '' } = {}) => {
+  const { messageType, ipp, patientIdentifierSystem, familyName, givenName, patientNames, sex, birthDate, patientClass, service, room, bed, eventDate, visitNumber, visitNumberSystem, movementId, movementSystem } = message
 
   const patient = buildFhirPatient({ ipp, familyName, givenName, sex, birthDate, patientNames, identifierSystem: patientIdentifierSystem })
   const locationHierarchy = buildLocationHierarchy({ service, room, bed })
@@ -656,9 +649,8 @@ const buildFhirResources = (message) => {
     patientClass,
     visitNumber,
     visitNumberSystem,
-    admitDate,
-    dischargeDate,
-    eventDate
+    start: visitStart,
+    end: visitEnd
   })
 
   const movementEncounter = buildFhirMovementEncounter({
@@ -700,7 +692,7 @@ const buildLocationState = ({ service, room, bed }) => ({
 })
 
 const transformA01 = (message, existingPatients = []) => {
-  const { ipp, eventDate, admitDate } = message
+  const { ipp, eventDate } = message
 
   const patientAlreadyExists = getPatientByIpp(existingPatients, ipp)
   if (patientAlreadyExists) {
@@ -708,12 +700,12 @@ const transformA01 = (message, existingPatients = []) => {
   }
 
   return {
-    ...buildFhirResources(message),
+    ...buildFhirResources(message, { visitStart: eventDate }),
     patientState: {
       ipp,
       type: 'admission',
       status: 'in-progress',
-      admissionDate: admitDate || eventDate || null,
+      admissionDate: eventDate,
       location: buildLocationState(message)
     }
   }
@@ -733,7 +725,7 @@ const transformA02 = (message, existingPatients = []) => {
   }
 
   return {
-    ...buildFhirResources(message),
+    ...buildFhirResources(message, { visitStart: patient.admissionDate || '' }),
     patientState: {
       ipp,
       type: 'transfer',
@@ -759,7 +751,7 @@ const transformA03 = (message, existingPatients = []) => {
   }
 
   return {
-    ...buildFhirResources(message),
+    ...buildFhirResources(message, { visitStart: patient.admissionDate || '', visitEnd: eventDate }),
     patientState: {
       ipp,
       type: 'discharge',

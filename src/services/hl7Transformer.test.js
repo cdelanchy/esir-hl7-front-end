@@ -13,15 +13,18 @@ const sampleFixtures = {
   A03: readFileSync(new URL('../../fixtures/A03.hl7', import.meta.url), 'utf8')
 }
 
-const buildA02Message = (eventDate = '20240102090000') => `MSH|^~\\&|HOSP|HOSP|EHR|EHR|20240101093000||ADT^A02|1|P|2.5
+// EVN-2 = date d'enregistrement, EVN-6 = date de l'évènement (prioritaire).
+const buildMessage = (type, { evn2 = '', evn6 = '', zbe2 = '', pv144 = '', pv145 = '' } = {}) => {
+  const pv1 = ['PV1', '1', 'O', 'ER^^^ER', ...Array(40).fill(''), pv144, pv145].join('|')
+  return `MSH|^~\\&|HOSP|HOSP|EHR|EHR|20240101093000||ADT^${type}|1|P|2.5
+EVN||${evn2}||||${evn6}
 PID|1||123456789||DOE^JOHN||19800101|M
-PV1|1|O|ER^^^ER
-ZBE|MOV-2^HOSP|${eventDate}||INSERT|N`
+${pv1}
+ZBE|MOV-${type}^HOSP|${zbe2}||INSERT|N`
+}
 
-const buildA03Message = (eventDate = '20240102090000') => `MSH|^~\\&|HOSP|HOSP|EHR|EHR|20240101093000||ADT^A03|1|P|2.5
-PID|1||123456789||DOE^JOHN||19800101|M
-PV1|1|O|ER^^^ER
-ZBE|MOV-3^HOSP|${eventDate}||INSERT|N`
+const buildA02Message = (eventDate = '20240102090000') => buildMessage('A02', { evn2: eventDate })
+const buildA03Message = (eventDate = '20240102090000') => buildMessage('A03', { evn2: eventDate })
 
 describe('transformHl7ToFhir', () => {
   it('throws when HL7 file is empty', () => {
@@ -124,6 +127,7 @@ describe('transformHl7ToFhir', () => {
 
   it('maps HL7 PID-5 repeated names with D and L types into Patient.name entries', () => {
     const message = `MSH|^~\\&|HOSP|HOSP|EHR|EHR|20240101093000||ADT^A01|1|P|2.5
+EVN||20240101093000
 PID|1||123456789||DUPONT^JEAN^PAUL^^^^D~MARTIN^JULES^^^^L||19800101|M
 PV1|1|O|ER^^^ER||||||||||||||||20240102090000`
 
@@ -145,6 +149,7 @@ PV1|1|O|ER^^^ER||||||||||||||||20240102090000`
 
   it('maps PV1-19 visit number and assigning authority into the Encounter identifier', () => {
     const message = `MSH|^~\\&|HOSP|HOSP|EHR|EHR|20240101093000||ADT^A01|1|P|2.5
+EVN||20240101093000
 PID|1||123456789||DOE^JOHN||19800101|M
 PV1|1|O|ER^^^ER||||||||||||||||VISIT-42^VISIT^1^urn:oid:1.2.3.4`
 
@@ -170,6 +175,7 @@ PV1|1|O|ER^^^ER||||||||||||||||VISIT-42^VISIT^1^urn:oid:1.2.3.4`
 
   it('adds fullUrl to every bundle entry and keeps internal references coherent', () => {
     const message = `MSH|^~\\&|HOSP|HOSP|EHR|EHR|20240101093000||ADT^A01|1|P|2.5
+EVN||20240101093000
 PID|1||123456789||DOE^JOHN||19800101|M
 PV1|1|O|UNIT^ROOM-12^BED-03||||||||||||||||20240102090000`
 
@@ -205,7 +211,7 @@ PV1|1|O|UNIT^ROOM-12^BED-03||||||||||||||||20240102090000`
     expect(visit.identifier[0].type.coding[0].code).toBe('VN')
     expect(visit.status).toBe('in-progress')
     expect(visit.class.code).toBe('IMP')
-    expect(visit.period).toEqual({ start: hl7DateToIso('20261109215300') })
+    expect(visit.period).toEqual({ start: hl7DateToIso('20261109215348') })
     expect(visit.partOf).toBeUndefined()
     expect(visit.location).toBeUndefined()
 
@@ -241,6 +247,42 @@ PV1|1|O|UNIT^ROOM-12^BED-03||||||||||||||||20240102090000`
     expect(result.movementEncounter.identifier[0].value).toBe('MOV7091')
     expect(result.movementEncounter.partOf.reference).toBe(result.fullUrls.encounter)
     expect(result.movementEncounter.location.map((entry) => entry.location.display)).toEqual(['8786', '270', '270-1'])
+    // Le séjour garde sa date d'admission, le mouvement prend l'EVN-6 de l'A02.
+    expect(result.encounter.period).toEqual({ start: hl7DateToIso('20261109215348') })
+    expect(result.movementEncounter.period).toEqual({ start: hl7DateToIso('20261109215552') })
+  })
+
+  describe('event date (EVN-6, then EVN-2)', () => {
+    const otherDates = { zbe2: '20240301090000', pv144: '20240302090000', pv145: '20240303090000' }
+
+    it('uses EVN-6 over EVN-2, ZBE-2 and PV1-44 for an A01', () => {
+      const result = transformHl7ToFhir(buildMessage('A01', { evn2: '20240101080000', evn6: '20240101100000', ...otherDates }))
+
+      expect(result.encounter.period).toEqual({ start: hl7DateToIso('20240101100000') })
+      expect(result.movementEncounter.period).toEqual({ start: hl7DateToIso('20240101100000') })
+      expect(result.patientState.admissionDate).toBe(hl7DateToIso('20240101100000'))
+    })
+
+    it('falls back to EVN-2 when EVN-6 is empty', () => {
+      const result = transformHl7ToFhir(buildMessage('A01', { evn2: '20240101080000', ...otherDates }))
+
+      expect(result.encounter.period).toEqual({ start: hl7DateToIso('20240101080000') })
+      expect(result.movementEncounter.period).toEqual({ start: hl7DateToIso('20240101080000') })
+    })
+
+    it('uses EVN-6 over PV1-45 as discharge date for an A03', () => {
+      const existingPatients = [{ ipp: '123456789', admissionDate: hl7DateToIso('20240101080000'), status: 'in-progress' }]
+      const result = transformHl7ToFhir(buildMessage('A03', { evn2: '20240105080000', evn6: '20240105100000', ...otherDates }), existingPatients)
+
+      expect(result.encounter.period).toEqual({ start: hl7DateToIso('20240101080000'), end: hl7DateToIso('20240105100000') })
+      expect(result.patientState.checkoutDate).toBe(hl7DateToIso('20240105100000'))
+    })
+
+    it('throws when neither EVN-6 nor EVN-2 is present', () => {
+      expect(() => transformHl7ToFhir(buildMessage('A01', otherDates))).toThrow(
+        'Le message HL7 ne contient pas de date d’évènement (EVN-6 ou EVN-2).'
+      )
+    })
   })
 
   it('finishes the visit and the movement Encounters for the A03 fixture', () => {
@@ -248,9 +290,14 @@ PV1|1|O|UNIT^ROOM-12^BED-03||||||||||||||||20240102090000`
     const result = transformHl7ToFhir(sampleFixtures.A03, existingPatients)
 
     expect(result.encounter.status).toBe('finished')
+    // Début : admission enregistrée sur le serveur ; fin : EVN-6 de l'A03 (et non PV1-45).
     expect(result.encounter.period).toEqual({
       start: hl7DateToIso('20261109215300'),
-      end: hl7DateToIso('20261111120000')
+      end: hl7DateToIso('20261109215649')
+    })
+    expect(result.movementEncounter.period).toEqual({
+      start: hl7DateToIso('20261109215649'),
+      end: hl7DateToIso('20261109215649')
     })
     expect(result.movementEncounter.status).toBe('finished')
     expect(result.movementEncounter.identifier[0].value).toBe('MOV7092')
