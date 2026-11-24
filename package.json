@@ -1,17 +1,30 @@
 {
-  "name": "esrh-hl7-front-end",
+  "name": "esir-hl7-front-end",
   "version": "2.0.0-dev",
   "private": true,
+  "description": "Front-end ESIR : suivi des patients HL7 v2 -> serveur FHIR",
+  "license": "CC-BY-NC-SA-4.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cdelanchy/esir-hl7-front-end.git"
+  },
+  "author": "Luile (https://github.com/Luile)",
+  "contributors": [
+    {
+      "name": "Clotaire Delanchy"
+    }
+  ],
+  "homepage": "https://github.com/cdelanchy/esir-hl7-front-end",
   "scripts": {
     "clean": "git -c core.excludesfile=/dev/null clean -X -d -f",
     "dev": "vite --host 0.0.0.0 --port 8005",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "test": "vitest run",
-    "docker:build": "docker build -t esrh-hl7-front-end ."
+    "docker:dev": "sh scripts/docker-image.sh dev",
+    "docker:release": "sh scripts/docker-image.sh release"
   },
   "keywords": [
-    "ESRH",
     "HL7",
     "ESIR",
     "FHIR"

@@ -1,5 +1,7 @@
-const clientId = import.meta.env.VITE_AIDBOX_CLIENT_ID || 'client_id'
-const clientCredential = import.meta.env.VITE_AIDBOX_CLIENT_CREDENTIAL || 'client_secret'
+import { homepage } from '../package.json'
+
+const clientId =import.meta.env.VITE_FHIR_SERVER_CLIENT_ID || 'client_id'
+const clientCredential = import.meta.env.VITE_FHIR_SERVER_CLIENT_CREDENTIAL || 'client_secret'
 const basicAuthToken = btoa(`${clientId}:${clientCredential}`)
 
 // Intervalle de rafraîchissement de la liste des patients, en secondes
@@ -10,10 +12,17 @@ const patientsRefreshIntervalSeconds = Number.isFinite(parsedRefreshInterval) &&
   ? parsedRefreshInterval
   : DEFAULT_PATIENTS_REFRESH_INTERVAL_SECONDS
 
+// Liens du pied de page. Seules les URL http(s) sont retenues.
+const asHttpUrl = (value = '') => (/^https?:\/\//i.test(value.trim()) ? value.trim() : '')
+
 export const config = {
-  aidboxUrl: import.meta.env.VITE_AIDBOX_URL || 'http://localhost:8080',
+  // Dépôt du projet : champ « homepage » du package.json (import nommé, seul ce champ est embarqué).
+  repositoryUrl: asHttpUrl(homepage),
+  // Dépôt du projet « père » : VITE_PARENT_REPOSITORY_URL (lien masqué si vide).
+  parentRepositoryUrl: asHttpUrl(import.meta.env.VITE_PARENT_REPOSITORY_URL),
+  fhirServerUrl: import.meta.env.VITE_FHIR_SERVER_URL || 'http://localhost:8080',
   patientsRefreshIntervalSeconds,
-  aidboxBasicAuth: {
+  fhirServerBasicAuth: {
     clientId,
     clientCredential,
     token: basicAuthToken

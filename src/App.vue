@@ -1,10 +1,14 @@
 <template>
   <router-view />
+  <AppFooter />
 </template>
 
 <script>
+import AppFooter from '@/components/AppFooter.vue'
+
 export default {
-  name: 'App'
+  name: 'App',
+  components: { AppFooter }
 }
 </script>
 

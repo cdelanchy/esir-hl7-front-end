@@ -1,4 +1,4 @@
-# CONTRIBUTION GUIDE TO ESRH HL7 FRONT-END PROJECT
+# CONTRIBUTION GUIDE TO ESIR HL7 FRONT-END PROJECT
 
 Contributions are always welcome on this project. If you want to lend us a hand, be sure to follow these little rules for a good merge request.
 

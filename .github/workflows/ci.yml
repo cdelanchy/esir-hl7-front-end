@@ -1,32 +1,63 @@
 name: HL7 Front CI
 
+# Sur chaque pull request, et sur develop / main pour le badge du README.
 on:
+  pull_request:
   push:
     branches:
-      - '**'
-  pull_request:
-    branches:
-      - '**'
+      - develop
+      - main
+
+# Un nouveau push sur une PR annule l'exécution précédente devenue inutile.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test-and-build:
+  tests:
+    name: Tests unitaires
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 26
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run regression tests
+      - name: Run tests
         run: npm test
 
-      - name: Build project
-        run: npm run build
+  docker:
+    name: Build de l'image Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Même commande qu'en local (npm run docker:dev) : build Vite + image Caddy.
+      - name: Build image
+        run: sh scripts/docker-image.sh dev
+
+      # Vérifie que Caddy démarre et sert bien l'application.
+      - name: Smoke test
+        run: |
+          image="esir-hl7-front-end:dev-$(git rev-parse --short HEAD)"
+          docker run -d --name front -p 8080:80 "$image"
+          for attempt in $(seq 1 10); do
+            if curl -fsS http://localhost:8080/ | grep -q '<div id="app">'; then
+              echo "L'application est servie."
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs front
+          exit 1

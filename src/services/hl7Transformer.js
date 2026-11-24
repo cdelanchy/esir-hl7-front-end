@@ -107,14 +107,14 @@ const parsePatientNames = (value = '') => {
 // PID-3 (CX répété) : on retient l'IPP (type PI), à défaut la première répétition.
 const parsePatientIdentifier = (value = '') => {
   const repetitions = normalizeText(value).split('~').map((entry) => entry.trim()).filter(Boolean)
-  if (!repetitions.length) return { value: '', system: 'urn:esrh' }
+  if (!repetitions.length) return { value: '', system: 'urn:esir' }
 
   const ippRepetition = repetitions.find((entry) => normalizeText(entry.split('^')[4]).toUpperCase() === 'PI') || repetitions[0]
   const identifier = parseCxIdentifier(ippRepetition)
 
   return {
     value: identifier.value,
-    system: identifier.system || 'urn:esrh'
+    system: identifier.system || 'urn:esir'
   }
 }
 
@@ -163,7 +163,7 @@ const getPatientByIpp = (patients = [], ipp = '') => {
   }) || null
 }
 
-const buildFhirPatient = ({ ipp, familyName, givenName, sex, birthDate, patientNames = [], identifierSystem = 'urn:esrh' }) => {
+const buildFhirPatient = ({ ipp, familyName, givenName, sex, birthDate, patientNames = [], identifierSystem = 'urn:esir' }) => {
   const resolvedNames = patientNames.length
     ? patientNames.map((name) => ({
       ...(name.use ? { use: name.use } : {}),
@@ -213,7 +213,7 @@ const buildFhirLocation = ({ name, physicalTypeCode, physicalTypeDisplay, typeCo
     },
     type: [{
       coding: [{
-        system: 'urn:esrh:location-type',
+        system: 'urn:esir:location-type',
         code: typeCode,
         display: typeDisplay
       }]
@@ -358,7 +358,7 @@ const buildFhirVisitEncounter = ({ patientRef, messageType, patientClass, visitN
         identifier: buildEncounterIdentifier({
           value: visitNumber,
           system: visitNumberSystem,
-          defaultSystem: 'urn:esrh:encounter-visit',
+          defaultSystem: 'urn:esir:encounter-visit',
           type: {
             coding: [{
               system: 'https://hl7.fr/ig/fhir/core/CodeSystem/fr-core-cs-identifier-type',
@@ -403,7 +403,7 @@ const buildFhirMovementEncounter = ({ patientRef, visitRef, messageType, patient
         identifier: buildEncounterIdentifier({
           value: movementId,
           system: movementSystem,
-          defaultSystem: 'urn:esrh:encounter-movement',
+          defaultSystem: 'urn:esir:encounter-movement',
           type: { text: 'Identifiant du mouvement (ZBE-1)' }
         })
       }
@@ -500,7 +500,7 @@ export const parseHl7Message = (hl7Text) => {
 
   let messageType = ''
   let ipp = ''
-  let patientIdentifierSystem = 'urn:esrh'
+  let patientIdentifierSystem = 'urn:esir'
   let familyName = ''
   let givenName = ''
   let sex = ''

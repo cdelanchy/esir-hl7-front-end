@@ -1,16 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { DateTime } from 'luxon'
-import { transformHl7ToFhir } from './hl7Transformer.js'
+import { transformHl7ToFhir } from '@/services/hl7Transformer.js'
 
-const sampleA01 = readFileSync(new URL('../../fixtures/A01-sample.hl7', import.meta.url), 'utf8')
+const sampleA01 = readFileSync(new URL('../fixtures/A01-sample.hl7', import.meta.url), 'utf8')
 
 const hl7DateToIso = (value) => DateTime.fromFormat(value, 'yyyyMMddHHmmss').toISO({ suppressMilliseconds: true })
 
 const sampleFixtures = {
-  A01: readFileSync(new URL('../../fixtures/A01.hl7', import.meta.url), 'utf8'),
-  A02: readFileSync(new URL('../../fixtures/A02.hl7', import.meta.url), 'utf8'),
-  A03: readFileSync(new URL('../../fixtures/A03.hl7', import.meta.url), 'utf8')
+  A01: readFileSync(new URL('../fixtures/A01.hl7', import.meta.url), 'utf8'),
+  A02: readFileSync(new URL('../fixtures/A02.hl7', import.meta.url), 'utf8'),
+  A03: readFileSync(new URL('../fixtures/A03.hl7', import.meta.url), 'utf8')
 }
 
 // EVN-2 = date d'enregistrement, EVN-6 = date de l'évènement (prioritaire).

@@ -2,11 +2,11 @@ import axios from 'axios'
 import { config } from '@/config'
 
 const fhirServerApi = axios.create({
-  baseURL: config.aidboxUrl,
+  baseURL: config.fhirServerUrl,
   headers: {
     'Content-Type': 'application/fhir+json',
     Accept: 'application/fhir+json',
-    Authorization: `Basic ${config.aidboxBasicAuth.token}`
+    Authorization: `Basic ${config.fhirServerBasicAuth.token}`
   }
 })
 
@@ -44,7 +44,7 @@ export default {
   },
 
   async searchByIdentifier (resourceType, identifierSystem, identifierValue) {
-    const system = identifierSystem || 'urn:esrh'
+    const system = identifierSystem || 'urn:esir'
     const value = identifierValue || ''
 
     if (!value) {

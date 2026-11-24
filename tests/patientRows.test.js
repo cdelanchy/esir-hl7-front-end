@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPatientRows } from './patientRows'
+import { buildPatientRows } from '@/services/patientRows'
 
 const patient = (id, family) => ({
   resourceType: 'Patient',
