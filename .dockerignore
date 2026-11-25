@@ -1,0 +1,16 @@
+# Dépendances et sorties locales : réinstallées / reconstruites dans l'image
+node_modules
+dist
+
+# Inutiles au build de l'application
+.git
+.github
+.vscode
+.idea
+tests
+fixtures
+scripts
+*.md
+LICENSE
+Dockerfile
+.dockerignore
