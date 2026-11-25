@@ -1,6 +1,6 @@
 {
   "name": "esir-hl7-front-end",
-  "version": "2.0.0-dev",
+  "version": "2.0.0",
   "private": true,
   "description": "Front-end ESIR : suivi des patients HL7 v2 -> serveur FHIR",
   "license": "CC-BY-NC-SA-4.0",
@@ -8,10 +8,12 @@
     "type": "git",
     "url": "https://github.com/cdelanchy/esir-hl7-front-end.git"
   },
-  "author": "Luile (https://github.com/Luile)",
   "contributors": [
     {
-      "name": "Clotaire Delanchy"
+      "name": "Lucile Cheron (https://github.com/Luile)"
+    },
+    {
+      "name": "Clotaire Delanchy (https://github.com/cdelanchy)"
     }
   ],
   "homepage": "https://github.com/cdelanchy/esir-hl7-front-end",
